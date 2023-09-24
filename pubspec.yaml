@@ -32,6 +32,8 @@ dependencies:
     sdk: flutter
   web_socket_channel: ^2.4.0
   location: ^5.0.0
+  http: ^0.13.4
+  geolocator: ^10.0.1
 
 
   # The following adds the Cupertino Icons font to your application.

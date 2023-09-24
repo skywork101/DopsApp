@@ -1,171 +1,151 @@
-import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:web_socket_channel/io.dart';
-import 'package:location/location.dart';
+import 'package:geolocator/geolocator.dart';
 
-void main() {
-  runApp(MyApp());
-}
-
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      home: MyHomePage(),
-    );
-  }
+  _MyAppState createState() => _MyAppState();
 }
 
-class MyHomePage extends StatefulWidget {
-  @override
-  _MyHomePageState createState() => _MyHomePageState();
-}
-
-class _MyHomePageState extends State<MyHomePage> {
-  final Location _location = Location();
-  WebSocketChannel? _channel;
+class _MyAppState extends State<MyApp> {
+  Socket? _socket;
   bool _isConnected = false;
-  bool _isSendingGPS = false;
-  StreamSubscription<LocationData>? _locationSubscription;
-  Timer? _locationTimer;
-  LocationData? _currentLocation;
-  String? _deviceId;
+  bool _isSendingLocation = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _initLocationService();
-  }
-
-  void _initLocationService() async {
-    bool serviceEnabled = await _location.serviceEnabled();
-    if (!serviceEnabled) {
-      serviceEnabled = await _location.requestService();
-      if (!serviceEnabled) {
-        return;
-      }
-    }
-
-    LocationData locationData = await _location.getLocation();
-    _locationSubscription =
-        _location.onLocationChanged.listen((LocationData currentLocation) {
+  void _toggleConnection() async {
+    if (_isConnected) {
+      _socket?.close();
       setState(() {
-        _currentLocation = currentLocation;
+        _isConnected = false;
       });
+    } else {
+      try {
+        final socket = await Socket.connect('192.168.0.103', 13313);
 
-      if (_isSendingGPS) {
-        _sendLocationData(currentLocation);
-      }
-    });
-  }
+        print('Connected to server');
 
-  void _connectToWebSocket() {
-    final channel = IOWebSocketChannel.connect('ws://192.168.1.71:13113');
-/*
-    channel.stream.listen((message) {
-      final data = json.decode(message);
-      if (data['type'] == 'connection_granted') {
-        // Connection granted, server sent an ID
+        socket.listen(
+          (data) {
+            final message = utf8.decode(data);
+            print('Received message: $message');
+
+            // Process the received message or update UI accordingly
+          },
+          onError: (error) {
+            print('Error: $error');
+            socket.close();
+          },
+          onDone: () {
+            print('Connection closed');
+            socket.close();
+          },
+        );
         setState(() {
-          _deviceId = data['id'];
+          _socket = socket;
           _isConnected = true;
         });
+      } catch (e) {
+        print('Connection error: $e');
       }
-    });
-
-
-
-    print("here");
-    channel.stream.listen((dynamic message) {
-      print(message);
-      if (message is Uint8List) {
-        // Assuming the message received is a byte array (Uint8List)
-        String jsonString =
-            utf8.decode(message); // Convert bytes to a JSON string
-        Map<String, dynamic> data =
-            json.decode(jsonString); // Parse JSON string to a Map
-
-        if (data['type'] == 'connection_granted') {
-          // Connection granted, server sent an ID
-          setState(() {
-            _deviceId = data['id'];
-            _isConnected = true;
-          });
-        }
-      }
-    });
-*/
-    setState(() {
-      _channel = channel;
-      _isConnected = true;
-    });
-  }
-
-  void _sendLocationData(LocationData locationData) {
-    if (_channel != null && _deviceId != null) {
-      final data = {
-        'type': 'location_data',
-        'id': _deviceId,
-        'latitude': locationData.latitude,
-        'longitude': locationData.longitude,
-      };
-
-      _channel!.sink.add(json.encode(data));
     }
   }
 
-  void _toggleSendingGPS() {
+  void _toggleSendingLocation() {
     setState(() {
-      _isSendingGPS = !_isSendingGPS;
-
-      if (_isSendingGPS) {
-        // Start sending GPS data at a 1-second interval
-        _locationTimer = Timer.periodic(Duration(seconds: 1), (timer) {
-          if (_currentLocation != null) {
-            _sendLocationData(_currentLocation!);
-          }
-        });
-      } else {
-        // Stop the location timer
-        _locationTimer?.cancel();
-      }
+      _isSendingLocation = !_isSendingLocation;
     });
+
+    if (_isSendingLocation) {
+      _sendLocation();
+    }
+  }
+
+  void _sendLocation() async {
+    while (_isSendingLocation) {
+      try {
+        final position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+        );
+        final locationData = 'Latitude: ${position.latitude}, '
+            'Longitude: ${position.longitude}';
+        _socket?.write(locationData);
+        _socket?.write("\n");
+        print("location sent $locationData");
+      } catch (e) {
+        print('Location sending error: $e');
+      }
+      await Future.delayed(Duration(seconds: 5));
+    }
+  }
+
+  void _sendmsg() async {
+    const locationData = 'hello bitch';
+    _socket?.write(locationData);
+    _socket?.write("\n");
+    print("location sent $locationData");
   }
 
   @override
   void dispose() {
-    _channel?.sink.close();
-    _locationSubscription?.cancel();
-    _locationTimer?.cancel();
+    _socket?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Dops Agent'),
-      ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            ElevatedButton(
-              onPressed: _isConnected ? null : _connectToWebSocket,
-              child: Text(_isConnected ? 'Connected' : 'Request Connection'),
-            ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: _isConnected ? _toggleSendingGPS : null,
-              child: Text(
-                  _isSendingGPS ? 'Stop Sending GPS' : 'Start Sending GPS'),
-            ),
-          ],
+    return MaterialApp(
+      home: Scaffold(
+        appBar: AppBar(
+          title: Text('TCP Socket Example'),
+        ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton(
+                onPressed: _toggleConnection,
+                child: Text(_isConnected ? 'Disconnect' : 'Connect'),
+              ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () {
+                  if (_isConnected) {
+                    _toggleSendingLocation();
+                  } else {
+                    showDialog(
+                      context: context,
+                      builder: (context) {
+                        return AlertDialog(
+                          title: Text('Connection Error'),
+                          content: Text('Please connect to the server.'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: Text('OK'),
+                            ),
+                          ],
+                        );
+                      },
+                    );
+                  }
+                },
+                child:
+                    Text(_isSendingLocation ? 'Stop Sending' : 'Start Sending'),
+              ),
+              SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _sendmsg,
+                child: Text(_isConnected ? 'send message' : 'connect first'),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
+}
+
+void main() {
+  runApp(MyApp());
 }
